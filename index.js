@@ -201,6 +201,7 @@ function writeName(name, ext) {
 	if (!ext) {
 		ext = path.extname(name)
 		name = path.basename(name, ext)
+		ext = ext.slice(1)
 	}
 	let ret = Buffer.alloc(11, ' ')
 	ret.write(name)
@@ -291,9 +292,11 @@ function writeFile(inFD, outFD, location) {
 	let promise = new Promise((res,rej)=>{resolve=res; reject=rej})
 
 	let input = fs.createReadStream(null,{fd:inFD})
+	let pos = 0
 	let output = new Writable({
 		write(chunk, encoding, callback) {
-			fs.write(outFD, chunk, 0, chunk.length, location, callback)
+			fs.write(outFD, chunk, 0, chunk.length, location + pos, callback)
+			pos = pos + chunk.length
 		}
 	})
 
