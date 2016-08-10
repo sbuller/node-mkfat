@@ -54,15 +54,16 @@ class FAT {
 	}
 	makeFAT() {
 		let buffer = Buffer.alloc(this.dataClusters * 16)
-		buffer.writeUInt8(this.mediadescriptor, 0)
+		buffer.writeUInt8(this.mediaDescriptor, 0)
 		buffer.writeUInt8(0xFF, 1)
 		buffer.writeUInt16LE(0xFFF8, 16) // the end of file marker
 
+		debug(`making FAT. dataClusters:${this.dataClusters}`)
 		// The table should be mostly full. We'll pre-fill it in-order, and then
 		// come back and mark the ends of files. We're not expecting any empty
 		// clusters, and we don't care about them anyway.
 		for (let i = 2; i < this.dataClusters; i++) {
-			let offset = 16*i
+			let offset = 2*i // two bytes per entry
 			let nextCluster = i+i
 			buffer.writeUInt16LE(nextCluster, offset)
 		}
@@ -70,7 +71,7 @@ class FAT {
 		this.files.forEach(file=>{
 			let lastCluster = file.location
 			lastCluster += Math.floor(file.size / 512 / this.clusterSize)
-			buffer.writeUInt16LE(0xFFF8, lastCluster)
+			buffer.writeUInt16LE(0xFFF8, lastCluster * 2) // two bytes per entry
 		})
 
 		return buffer
@@ -154,6 +155,10 @@ class FAT {
 			let rootDir = this.makeRootDir()
 			let bss = this.makeBootSector()
 			let fat = this.makeFAT()
+			debug('root directory')
+			debug(rootDir.toString('hex'))
+			debug('FAT')
+			debug(fat.toString('hex'))
 
 			let filesWritePromises = this.files.map(file=>writeFile(file, outputFD, 512 * this.clusterSize))
 			let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
@@ -207,6 +212,9 @@ function dirEntry({name, location, size}) {
 	nameBuf.copy(entry)
 	entry.writeUInt16LE(location, 26)
 	entry.writeUInt32LE(size, 28)
+
+	debug('entry')
+	debug(entry.toString('hex'), entry.length)
 
 	/*
 	time = time || new Date
