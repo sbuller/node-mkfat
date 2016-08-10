@@ -95,7 +95,7 @@ class FAT {
 		return this.reservedSectors + (fatsectors * this.fatCount) + rootdirsectors + dataareasectors
 	}
 	rootDirLocation() {
-		return this.reservedSectors + this.fatCount * this.fatSectors()
+		return 512 * (this.reservedSectors + this.fatCount * this.fatSectors())
 	}
 	makeBootSector() {
 		let buffer = Buffer.alloc(512, 0)
@@ -161,6 +161,7 @@ class FAT {
 			debug(fat.toString('hex'))
 
 			let filesWritePromises = this.files.map(file=>writeFile(file, outputFD, 512 * this.clusterSize))
+			debug(`Writing root directory at ${this.rootDirLocation()}`)
 			let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
 			let bssWritePromise = writeBuffer(bss, outputFD, 0)
 			let fatSize = this.fatSectors()
