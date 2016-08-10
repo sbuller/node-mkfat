@@ -160,7 +160,13 @@ class FAT {
 			debug('FAT')
 			debug(fat.toString('hex'))
 
-			let filesWritePromises = this.files.map(file=>writeFile(file, outputFD, 512 * this.clusterSize))
+			let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
+			debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
+			let filesWritePromises = this.files.map(file=>{
+				let fileStart = dataAreaStart + 512 * this.clusterSize * (file.location-2)
+				debug(`Writing file at offset ${fileStart}`)
+				writeFile(file.fd, outputFD, fileStart)
+			})
 			debug(`Writing root directory at ${this.rootDirLocation()}`)
 			let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
 			let bssWritePromise = writeBuffer(bss, outputFD, 0)
@@ -271,15 +277,15 @@ function writeBuffer(buffer, fd, location) {
 	})
 	return promise
 }
-function writeFile(file, outFD, csize) {
+function writeFile(inFD, outFD, location) {
 	// this.outputFD should be set before writeFile is called
 	let resolve, reject
 	let promise = new Promise((res,rej)=>{resolve=res; reject=rej})
 
-	let input = fs.createReadStream(null,{fd:file.fd})
+	let input = fs.createReadStream(null,{fd:inFD})
 	let output = new Writable({
 		write(chunk, encoding, callback) {
-			fs.write(outFD, chunk, 0, chunk.length, file.location * csize, callback)
+			fs.write(outFD, chunk, 0, chunk.length, location, callback)
 		}
 	})
 
