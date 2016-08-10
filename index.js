@@ -37,6 +37,8 @@ class FAT {
 			return file
 		})
 		this.dataClusters = cluster - 1
+		if (this.dataClusters < 4085)
+			this.dataClusters = 4085
 		return files
 	}
 	makeRootDir() {
