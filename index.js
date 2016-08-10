@@ -56,7 +56,7 @@ class FAT {
 		let buffer = Buffer.alloc(this.dataClusters * 16)
 		buffer.writeUInt8(this.mediaDescriptor, 0)
 		buffer.writeUInt8(0xFF, 1)
-		buffer.writeUInt16LE(0xFFF8, 16) // the end of file marker
+		buffer.writeUInt16LE(0xFFF8, 2) // the end of file marker
 
 		debug(`making FAT. dataClusters:${this.dataClusters}`)
 		// The table should be mostly full. We'll pre-fill it in-order, and then
@@ -64,7 +64,7 @@ class FAT {
 		// clusters, and we don't care about them anyway.
 		for (let i = 2; i < this.dataClusters; i++) {
 			let offset = 2*i // two bytes per entry
-			let nextCluster = i+i
+			let nextCluster = i+1
 			buffer.writeUInt16LE(nextCluster, offset)
 		}
 
@@ -152,6 +152,7 @@ class FAT {
 			this.assignFileLocations()
 			debug('File locations assigned')
 			debug(files)
+
 			let rootDir = this.makeRootDir()
 			let bss = this.makeBootSector()
 			let fat = this.makeFAT()
