@@ -32,7 +32,7 @@ class FAT {
 		let csize = this.clusterSize * 512
 		let cluster = 2;
 		files.map(file=>{
-			file.pos = cluster
+			file.location = cluster
 			cluster += Math.ceil(file.size/csize)
 			return file
 		})
@@ -146,14 +146,16 @@ class FAT {
 		let filesready = filesWithSizes(this.files)
 
 		let datawritten = filesready.then(files=>{
-			debug('File sizes found', files)
+			debug('File sizes found')
 			this.files = files
 			this.assignFileLocations()
+			debug('File locations assigned')
+			debug(files)
 			let rootDir = this.makeRootDir()
 			let bss = this.makeBootSector()
 			let fat = this.makeFAT()
 
-			let filesWritePromises = this.files.map(file=>writeFile(file, outputFD))
+			let filesWritePromises = this.files.map(file=>writeFile(file, outputFD, 512 * this.clusterSize))
 			let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
 			let bssWritePromise = writeBuffer(bss, outputFD, 0)
 			let fatSize = this.fatSectors()
@@ -260,7 +262,7 @@ function writeBuffer(buffer, fd, location) {
 	})
 	return promise
 }
-function writeFile(file, outFD) {
+function writeFile(file, outFD, csize) {
 	// this.outputFD should be set before writeFile is called
 	let resolve, reject
 	let promise = new Promise((res,rej)=>{resolve=res; reject=rej})
@@ -268,7 +270,7 @@ function writeFile(file, outFD) {
 	let input = fs.createReadStream(null,{fd:file.fd})
 	let output = new Writable({
 		write(chunk, encoding, callback) {
-			fs.write(outFD, chunk, 0, chunk.length, file.location, callback)
+			fs.write(outFD, chunk, 0, chunk.length, file.location * csize, callback)
 		}
 	})
 
