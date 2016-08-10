@@ -24,6 +24,9 @@ class FAT {
 		this.name.write(name || 'nos-fat')
 		this.files = []
 	}
+	bootcode(buffer) {
+		this._bootcode = buffer
+	}
 	file(name, fd) {
 		this.files.push({name, fd})
 		return this
@@ -156,18 +159,49 @@ class FAT {
 		let sectorSize = 512
 		let fatCount = 1
 		let reservedSectors = 1
-		let buffer = Buffer.alloc(512)
+		let buffer = Buffer.alloc(512, 0)
+
+		let sectorCount = this.countAllSectors()
+		let smallSectorCount = 0
+		let largeSectorCount = 0
+		if (sectorCount <= 0xFFFF) {
+			smallSectorCount = sectorCount
+		} else {
+			largeSectorCount = sectorCount
+		}
 		
 		let namebuf = Buffer.alloc(8, ' ')
 		namebuf.write(this.name)
 		namebuf.copy(buffer, 0x03)
 
-		buffer.writeUInt16LE(sectorSize, 0x0B)
-		buffer.writeUInt8(this.clusterSize, 0x0D)
-		buffer.writeUInt16LE(reservedSectors, 0x0E)
-		buffer.writeUInt8(fatCount, 0x10)
+		// Some of the below are simply copied from some other source and seem to
+		// work. Most of these are labelled with whatever information was
+		// provided.
+		buffer.writeUInt16LE(sectorSize,          0x0B)
+		buffer.writeUInt8   (this.clusterSize,    0x0D)
+		buffer.writeUInt16LE(reservedSectors,     0x0E)
+		buffer.writeUInt8   (fatCount,            0x10)
 		buffer.writeUInt16LE(this.maxRootEntries, 0x11)
-		buffer.writeUInt16LE(this.countAllSectors(), 0x13)
+		buffer.writeUInt16LE(smallSectorCount,    0x13)
+		buffer.writeUInt8   (0xF8,                0x15) // mark type as harddisk
+		buffer.writeUInt16LE(this.fatSectors(),   0x16)
+		buffer.writeUInt16LE(0x20,                0x18) // CHS - sectors
+		buffer.writeUInt16LE(0x40,                0x1A) // CHS - heads
+		buffer.writeUInt32LE(0x00,                0x1C) // hidden sectors
+		buffer.writeUInt32LE(largeSectorCount,    0x20)
+		buffer.writeUInt8   (0x80,                0x24) // logical drive number
+		buffer.writeUInt8   (0x00,                0x25) // reserved
+		buffer.writeUInt8   (0x29,                0x26) // magic number - Indicates following 3 fields are present
+		this.serial.copy(buffer,                  0x27)
+		namebuf.copy    (buffer,                  0x2B)
+		Buffer.from('FAT16   ').copy(buffer,      0x36)
+
+		if (this._bootcode) {
+			this._bootcode.copy(buffer, 0, 0, 3)    // Copy first 3 bytes - a jump instruction
+			this._bootcode.copy(buffer, 0x5A, 0x5A) // Copy bootcode
+		}
+
+		return buffer
 	}
 	makeDisk(outputFD) {
 		fs.write
