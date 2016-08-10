@@ -91,6 +91,7 @@ class FAT {
 		// Not suitable as there are cases where trailing zeros are necessary
 		// let datasectors = this.dataSectors()
 		let dataareasectors = this.dataClusters * this.clusterSize
+		debug(`Counting all Sectors. ${fatsectors}, ${rootdirsectors}, ${dataareasectors}`)
 
 		return this.reservedSectors + (fatsectors * this.fatCount) + rootdirsectors + dataareasectors
 	}
@@ -156,34 +157,38 @@ class FAT {
 			let rootDir = this.makeRootDir()
 			let bss = this.makeBootSector()
 			let fat = this.makeFAT()
+			let lastByte = this.countAllSectors() * 512 - 1
 			debug('root directory')
 			debug(rootDir.toString('hex'))
 			debug('FAT')
 			debug(fat.toString('hex'))
 
-			let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
-			debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
-			let filesWritePromises = this.files.map(file=>{
-				let fileStart = dataAreaStart + 512 * this.clusterSize * (file.location-2)
-				debug(`Writing file at offset ${fileStart}`)
-				writeFile(file.fd, outputFD, fileStart)
+			return writeBuffer(Buffer.alloc(1), outputFD, lastByte).then(()=>{ // pre-allocate space, including final padding
+				debug(`Pre allocated space by writing a 0 at ${lastByte}`)
+				let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
+				debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
+				let filesWritePromises = this.files.map(file=>{
+					let fileStart = dataAreaStart + 512 * this.clusterSize * (file.location-2)
+					debug(`Writing file at offset ${fileStart}`)
+					writeFile(file.fd, outputFD, fileStart)
+				})
+				debug(`Writing root directory at ${this.rootDirLocation()}`)
+				let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
+				let bssWritePromise = writeBuffer(bss, outputFD, 0)
+				let fatSize = this.fatSectors()
+				let fatWritePromises = []
+				for (let i=0; i<this.fatCount; i++) {
+					let p = writeBuffer(fat, outputFD, this.reservedSectors * 512 + i*fatSize)
+					fatWritePromises.push(p)
+				}
+
+				let outputPromises = filesWritePromises
+				outputPromises.push(rootWritePromise)
+				outputPromises.push(bssWritePromise)
+				outputPromises.push(...fatWritePromises)
+
+				return Promise.all(outputPromises)
 			})
-			debug(`Writing root directory at ${this.rootDirLocation()}`)
-			let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
-			let bssWritePromise = writeBuffer(bss, outputFD, 0)
-			let fatSize = this.fatSectors()
-			let fatWritePromises = []
-			for (let i=0; i<this.fatCount; i++) {
-				let p = writeBuffer(fat, outputFD, this.reservedSectors * 512 + i*fatSize)
-				fatWritePromises.push(p)
-			}
-
-			let outputPromises = filesWritePromises
-			outputPromises.push(rootWritePromise)
-			outputPromises.push(bssWritePromise)
-			outputPromises.push(...fatWritePromises)
-
-			return Promise.all(outputPromises)
 		})
 
 		return datawritten
