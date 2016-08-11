@@ -10,7 +10,7 @@ class FAT {
 	constructor(params) {
 		params = params || {}
 		this.serial = params.serial || crypto.randomBytes(4)
-		this.name = Buffer.alloc(8, ' ')
+		this.name = Buffer.alloc(11, ' ')
 		this.name.write(params.name || 'nos-fat')
 		this.files = []
 		this.fatCount = params.fatCount || 1
@@ -112,7 +112,7 @@ class FAT {
 			largeSectorCount = sectorCount
 		}
 		
-		let oemName = Buffer.from("nos-mkfat")
+		let oemName = Buffer.from("nos-fat")
 		oemName.copy(buffer, 0x03)
 
 		// Some of the below are simply copied from some other source and seem to
@@ -222,12 +222,24 @@ function filesWithSizes(files) {
 	)
 }
 function dirEntry({name, location, size}) {
+	let attributes = {}
+	if (name === name.toLowerCase()) {
+		attributes.lowercase = true
+	} else {
+		debug(`Non-uppercase name ${name}`)
+	}
+	name = name.toUpperCase()
+
 	let nameBuf = writeName(name)
 	let entry = Buffer.alloc(32)
 
 	nameBuf.copy(entry)
 	entry.writeUInt16LE(location, 26)
 	entry.writeUInt32LE(size, 28)
+
+	if (attributes.lowercase) {
+		entry.writeUInt8(16|8, 12) // bits 2³ and 2⁴ mark lowercase basename and extension respectively
+	}
 
 	debug('entry')
 	debug(entry.toString('hex'), entry.length)
