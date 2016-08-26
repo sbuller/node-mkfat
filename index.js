@@ -55,7 +55,7 @@ class FAT {
 		let buffer = Buffer.alloc(this.dataClusters * 16)
 		buffer.writeUInt8(this.mediaDescriptor, 0)
 		buffer.writeUInt8(0xFF, 1)
-		buffer.writeUInt16LE(0xFFF8, 2) // the end of file marker
+		buffer.writeUInt16LE(0xFFFF, 2) // the end of file marker
 
 		debug(`making FAT. dataClusters:${this.dataClusters}`)
 		// The table should be mostly full. We'll pre-fill it in-order, and then
@@ -70,7 +70,7 @@ class FAT {
 		this.files.forEach(file=>{
 			let lastCluster = file.location
 			lastCluster += Math.floor(file.size / 512 / this.clusterSize)
-			buffer.writeUInt16LE(0xFFF8, lastCluster * 2) // two bytes per entry
+			buffer.writeUInt16LE(0xFFFF, lastCluster * 2) // two bytes per entry
 		})
 
 		return buffer
