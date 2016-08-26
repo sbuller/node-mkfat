@@ -17,9 +17,6 @@ class FAT {
 		this.reservedSectors = params.reservedSectors || 1
 		this.mediaDescriptor = params.mediaDescriptor || 0xF8
 	}
-	bootcode(buffer) {
-		this._bootcode = buffer
-	}
 	file(name, fd) {
 		this.files.push({name, fd})
 		return this
@@ -137,10 +134,7 @@ class FAT {
 		this.name.copy  (buffer,                   0x2B)
 		Buffer.from('FAT16   ').copy(buffer,       0x36)
 
-		if (this._bootcode) {
-			this._bootcode.copy(buffer, 0, 0, 3)    // Copy first 3 bytes - a jump instruction
-			this._bootcode.copy(buffer, 0x5A, 0x5A) // Copy bootcode
-		}
+		buffer.writeUInt16BE(0x55AA,              0x1FE)
 
 		return buffer
 	}
