@@ -12,43 +12,110 @@ class FAT {
 		this.serial = params.serial || crypto.randomBytes(4)
 		this.name = Buffer.alloc(11, ' ')
 		this.name.write(params.name || 'nos-fat')
-		this.files = []
+		this.entries = []
+		this.root  = {name:'', parent:null, entries:[], type:'dir'}
+		this.pwd   = this.root
 		this.fatCount = params.fatCount || 1
 		this.reservedSectors = params.reservedSectors || 1
 		this.mediaDescriptor = params.mediaDescriptor || 0xF8
 	}
+	entry(name, type, size, {fd, target, entries, parent}) {
+		let pos = this.entries.length
+		let entry = {type, name, pos, fd, target, entries, parent, location:undefined}
+		this.entries.push(entry)
+		this.pwd.entries.push(entry)
+		return entry
+	}
 	file(name, fd) {
-		this.files.push({name, fd})
+		this.entry(name, 'file', undefined, {fd})
 		return this
+	}
+	link(name, target) {
+		this.entry(name, 'link', 0, {target})
+		return this
+	}
+	dir(name) {
+		let entry = this.entry(name, 'dir', undefined, {entries:[], parent:this.pwd})
+		this.pwd = entry
+		this.link('.', entry)
+		this.link('..', entry.parent)
+		return this
+	}
+	dotdot() {
+		this.pwd = this.pwd.parent || this.root
+		return this
+	}
+	getFile(target) {
+		if (!(typeof target === 'string')) return target
+		let segments = target.split('/')
+		let dir = this.root
+		if (segments[0] === '') {
+			// omit the first entry (root), and last entry (filename)
+			segments.slice(1, -1).forEach(segment=>{
+				let dir_entry = dir.find(({name})=>name===segment)
+				if (!dir_entry) {
+					throw new Error(`Target not found at '${segment}', in '${target}'.`)
+				} else {
+					dir = this.entries[dir_entry.pos]
+				}
+			})
+		}
+		// I'm intentionally ignoring more complicated relative paths
+		// This handles immediate filenames and absolute paths
+		let filename = segments.pop()
+		let file = dir.entries.find(({name})=>name===filename)
+		return file
+	}
+	calcDirSizes() {
+		this.entries.forEach(entry=>{
+			if (entry.type === 'dir')
+				entry.size = entry.entries.length * 32
+		})
+	}
+	assignClusterSize() {
+		// files should have sizes before this is called
+		this.dataSectors = sectorsNeeded(this.entries)
+		let minimumClusters = this.entries.filter(e=>e.type!=='link').length
+		this.clusterSize = calcClusterSize(this.dataSectors, minimumClusters)
 	}
 	assignFileLocations() {
 		// files should have sizes before this is called
-		let files = this.files
-		this.dataSectors = sectorsNeeded(files)
-		this.clusterSize = calcClusterSize(this.dataSectors, files.length)
+		// clusterSize should be assigned
+		let files = this.entries.filter(e=>e.type==='file')
 		let csize = this.clusterSize * 512
-		let cluster = 2;
-		files.map(file=>{
-			file.location = cluster
-			cluster += Math.ceil(file.size/csize)
-			return file
+		let cluster = 2
+		this.entries.forEach(entry=>{
+			if (entry.type !== 'link') {
+				entry.location = cluster
+				cluster += Math.ceil(entry.size/csize)
+			} else {
+				// The linked file must be declared before the link, or this will fail
+				let file = this.getFile(entry.target)
+				entry.location = file.location
+				// I'm assuming that by now nothing is going to be messeg up by a
+				// link having a size
+				entry.size = file.size
+			}
 		})
 		this.dataClusters = cluster - 1
 		if (this.dataClusters < 4085)
 			this.dataClusters = 4085
 		return files
 	}
+	makeDirBuffer(dir) {
+		// files should have sizes and locations before this is called
+		let sectors = Math.ceil(dir.size / 512)
+		let buffer = Buffer.alloc(sectors * 512)
+		dir.entries.forEach((entry,i)=>{
+			dirEntry(entry).copy(buffer, i*32)
+		})
+		return buffer
+	}
 	makeRootDir() {
 		// files should have sizes and locations before this is called
-		let files = this.files
-		let rootDirSectors = Math.ceil(files.length * 32 / 512)
-		this.maxRootEntries = rootDirSectors * 512 / 32
-
-		let rootDir = Buffer.alloc(512 * rootDirSectors)
-		files.forEach((file,i)=>{
-			dirEntry(file).copy(rootDir, i*32)
-		})
-
+		this.root.size = this.root.entries.length * 32
+		let rootDir = this.makeDirBuffer(this.root)
+		this.maxRootEntries = rootDir.length / 32
 		return rootDir
 	}
 	makeFAT() {
@@ -67,10 +134,12 @@ class FAT {
 			buffer.writeUInt16LE(nextCluster, offset)
 		}
 
-		this.files.forEach(file=>{
-			let lastCluster = file.location
-			lastCluster += Math.floor(file.size / 512 / this.clusterSize)
+		this.entries.forEach(entry=>{
+			if (entry.type === 'link') return
+			let lastCluster = entry.location
+			lastCluster += Math.floor(entry.size / 512 / this.clusterSize)
 			buffer.writeUInt16LE(0xFFFF, lastCluster * 2) // two bytes per entry
+			debug(`Terminated entry ${entry.name} at cluster ${lastCluster}.`)
 		})
 
 		return buffer
@@ -141,11 +210,12 @@ class FAT {
 	makeDisk(outputFD) {
 		this.outputFD = outputFD
 
-		let filesready = filesWithSizes(this.files)
+		let filesready = filesWithSizes(this.entries.filter(e=>e.type==='file'))
+		this.calcDirSizes()
 
 		let datawritten = filesready.then(files=>{
 			debug('File sizes found')
-			this.files = files
+			this.assignClusterSize()
 			this.assignFileLocations()
 			debug('File locations assigned')
 			debug(files)
@@ -157,16 +227,20 @@ class FAT {
 			debug('root directory')
 			debug(rootDir.toString('hex'))
 			debug('FAT')
-			debug(fat.toString('hex'))
+			//debug(fat.toString('hex'))
 
 			return writeBuffer(Buffer.alloc(1), outputFD, lastByte).then(()=>{ // pre-allocate space, including final padding
 				debug(`Pre allocated space by writing a 0 at ${lastByte}`)
 				let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
 				debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
-				let filesWritePromises = this.files.map(file=>{
-					let fileStart = dataAreaStart + 512 * this.clusterSize * (file.location-2)
-					debug(`Writing file at offset ${fileStart}`)
-					writeFile(file.fd, outputFD, fileStart)
+				let filesWritePromises = this.entries.map(entry=>{
+					if (entry.type === 'link') return Promise.resolve()
+					let entryStart = dataAreaStart + 512 * this.clusterSize * (entry.location-2)
+					debug(`Writing entry ${entry.name} at offset ${entryStart}`)
+					if (entry.type === 'file')
+						return writeFile(entry.fd, outputFD, entryStart)
+					if (entry.type === 'dir')
+						return writeBuffer(this.makeDirBuffer(entry), outputFD, entryStart)
 				})
 				debug(`Writing root directory at ${this.rootDirLocation()}`)
 				let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
@@ -215,14 +289,21 @@ function filesWithSizes(files) {
 		}))
 	)
 }
-function dirEntry({name, location, size}) {
-	let attributes = {}
+function dirEntry({name, location, size, type, attributes, target}) {
+	attributes = attributes || {}
+	if (type === 'link' && target.type === 'dir') type = 'dir'
+	attributes.type = type
+
 	if (name === name.toLowerCase()) {
 		attributes.lowercase = true
 	} else {
 		debug(`Non-uppercase name ${name}`)
 	}
 	name = name.toUpperCase()
+
+	if (type === 'dir') {
+		size = 0
+	}
 
 	let nameBuf = writeName(name)
 	let entry = Buffer.alloc(32)
@@ -231,11 +312,21 @@ function dirEntry({name, location, size}) {
 	entry.writeUInt16LE(location, 26)
 	entry.writeUInt32LE(size, 28)
 
+	let attr = 0
+	attr |= attributes.ro     && 0x01
+	attr |= attributes.hidden && 0x02
+	attr |= attributes.system && 0x04
+	attr |= attributes.volume && 0x08 // yeah, not likely...
+	attr |= attributes.longfn && 0x0f // the long filename tag. we're not generating these
+	attr |= (attributes.type === 'dir') && 0x10
+	attr |= attributes.archive && 0x20
+	entry.writeUInt8(attr, 11)
+
 	if (attributes.lowercase) {
 		entry.writeUInt8(16|8, 12) // bits 2³ and 2⁴ mark lowercase basename and extension respectively
 	}
 
-	debug('entry')
+	debug('entry %s', name)
 	debug(entry.toString('hex'), entry.length)
 
 	/*
@@ -259,7 +350,7 @@ function dirEntry({name, location, size}) {
 }
 function sectorsNeeded(files) {
 	// files should have sizes calculated before this is called
-	return files.reduce((prev,{size})=>prev+size, 0)/512
+	return files.reduce((prev,{size})=>prev+(size||0), 0)/512
 }
 function calcClusterSize(sectors, fileCount) {
 	// cluster sizes in sectors may be powers of two greater >=4 and <=64
