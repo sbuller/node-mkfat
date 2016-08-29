@@ -62,7 +62,7 @@ class FAT {
 		if (segments[0] === '') {
 			// omit the first entry (root), and last entry (filename)
 			segments.slice(1, -1).forEach(segment=>{
-				let dir_entry = dir.find(({name})=>name===segment)
+				let dir_entry = dir.entries.find(({name})=>name===segment)
 				if (!dir_entry) {
 					throw new Error(`Target not found at '${segment}', in '${target}'.`)
 				} else {
