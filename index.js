@@ -291,7 +291,7 @@ function fdSize(fd) {
 			if (err)
 				reject(err)
 			else
-				resolve(fd)
+				resolve(stat.size)
 		})
 	})
 }
