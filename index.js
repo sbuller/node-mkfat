@@ -342,7 +342,7 @@ function dirEntry({name, location, size, type, attributes, target, time}) {
 	// FAT16 seems to consider 0x14 as access time, FAT32 seems to override that
 	// for the high bits of the address. I may as well leave this here. Zeroeing
 	// the field in FAT16 seems perfectly reasonable.
-	let locationLow = location && 0xffff
+	let locationLow = location & 0xffff
 	let locationHigh = location >> 16
 	entry.writeUInt16LE(locationHigh, 0x14)
 	entry.writeUInt16LE(locationLow, 26)
