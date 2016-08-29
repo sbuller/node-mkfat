@@ -78,8 +78,10 @@ class FAT {
 	}
 	calcDirSizes() {
 		this.entries.forEach(entry=>{
-			if (entry.type === 'dir')
-				entry.size = entry.entries.length * 32
+			if (entry.type === 'dir') {
+				let lfnEntryCount = lfnCount(entry.name)
+				entry.size = (entry.entries.length + lfnEntryCount) * 32
+			}
 		})
 	}
 	assignClusterSize() {
@@ -423,6 +425,46 @@ function writeFile(inFD, outFD, location) {
 	input.pipe(output).on('end', resolve).on('error', reject)
 
 	return promise
+}
+function lfnCount(name) {
+	let ext = path.extname(name)
+	let basename = path.basename(name, ext)
+
+	// ext will have an initial '.'
+	if (basename.length > 8 || ext.length > 4)
+		return Math.ceil(name / 13)
+	else
+		return 0
+}
+function makeLfnEntry(nameBuffer, pos) {
+	let entry = Buffer.alloc(32)
+	entry[0x00] = pos
+	entry[0x0b] = 0x0f
+	entry[0x0d] = 0x98
+	// bytes 0x0c, 0x1a & 0x1b should remain as 0x00.
+	nameBuffer.copy(entry, 0x01, 0x00, 0x10)
+	nameBuffer.copy(entry, 0x0e, 0x10, 0x0c)
+	nameBuffer.copy(entry, 0x1c, 0x1c, 0x04)
+}
+function makeLfnEntries(name) {
+	let lfnC = lfnCount(name)
+	let ret = Buffer.alloc(lfnC * 32)
+	let ucs2 = Buffer.from(name, 'ucs2')
+
+	for (let i=0; i<lfnC; i++) {
+		let order = i?(lfnC - i):(lfnC + 0x40)
+		let nameBuf = Buffer.alloc(32, 0xff)
+		let start = (lfnC - i) * 32
+		ucs2.copy(nameBuf, 0, start, 32)
+		if (i === 0) {
+			let shortfall = lfnC * 32 - ucs2.length
+			nameBuf[32 - shortfall] = 0x00
+			nameBuf[31 - shortfall] = 0x00
+		}
+		let entry = makeLfnEntry(nameBuf, order)
+		entry.copy(ret, i*32)
+	}
+	return ret
 }
 
 
