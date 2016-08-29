@@ -13,7 +13,7 @@ The approach I'm taking makes several assumptions to keep it simple:
 Some of these aren't hard to fix, but I'm not planning on working on them unless I find a need.
 
 My main references have been:
-https://www.win.tue.nl/~aeb/linux/fs/fat/fat-1.html
-https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system
-http://www.c-jump.com/CIS24/Slides/FAT/lecture.html#F01_0140_root_directory
-http://www.beginningtoseethelight.org/fat16/index.htm
+* https://www.win.tue.nl/~aeb/linux/fs/fat/fat-1.html
+* https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system
+* http://www.c-jump.com/CIS24/Slides/FAT/lecture.html#F01_0140_root_directory
+* http://www.beginningtoseethelight.org/fat16/index.htm
