@@ -23,7 +23,7 @@ class FAT {
 	addSpace(bytes) {
 		this.extraSpace += bytes
 	}
-	entry(name, type, size, {fd, target, entries, parent}) {
+	entry(name, type, {fd, target, entries, parent}) {
 		let pos = this.entries.length
 		let entry = {type, name, pos, fd, target, entries, parent, location:undefined}
 		this.entries.push(entry)
@@ -31,15 +31,15 @@ class FAT {
 		return entry
 	}
 	file(name, fd) {
-		this.entry(name, 'file', undefined, {fd})
+		this.entry(name, 'file', {fd})
 		return this
 	}
 	link(name, target) {
-		this.entry(name, 'link', 0, {target})
+		this.entry(name, 'link', {target})
 		return this
 	}
 	dir(name) {
-		let entry = this.entry(name, 'dir', undefined, {entries:[], parent:this.pwd})
+		let entry = this.entry(name, 'dir', {entries:[], parent:this.pwd})
 		this.pwd = entry
 		this.link('.', entry)
 		this.link('..', entry.parent)
