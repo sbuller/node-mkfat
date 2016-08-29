@@ -166,7 +166,7 @@ class FAT {
 		return Math.ceil((this.dataClusters + this.emptyClusters())* 16 / 512)
 	}
 	rootDirSectors() {
-		return this.maxRootEntries * 32 / 512
+		return Math.ceil(this.maxRootEntries * 32 / 512)
 	}
 	dataAreaSectors() {
 		return this.dataClusters * this.clusterSize
