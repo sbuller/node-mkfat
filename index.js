@@ -1,4 +1,4 @@
-const fs = require('mz/fs')
+const fs = require('fs')
 const crypto = require('crypto')
 const path = require('path')
 const {Writable} = require('stream')
@@ -285,7 +285,16 @@ function writeName(name, ext) {
 	return ret
 }
 
-const fdSize = fd=>fs.fstat(fd).then(stat=>stat.size)
+function fdSize(fd) {
+	return new Promise((resolve,reject)=>{
+		fs.fstat(fd, (err,stat)=>{
+			if (err)
+				reject(err)
+			else
+				resolve(fd)
+		})
+	})
+}
 
 function filesWithSizes(files) {
 	let sizes = files.map(file=>fdSize(file.fd))
