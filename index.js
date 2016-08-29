@@ -18,6 +18,10 @@ class FAT {
 		this.fatCount = params.fatCount || 1
 		this.reservedSectors = params.reservedSectors || 1
 		this.mediaDescriptor = params.mediaDescriptor || 0xF8
+		this.extraSpace = params.extraSpace || 0
+	}
+	addSpace(bytes) {
+		this.extraSpace += bytes
 	}
 	entry(name, type, size, {fd, target, entries, parent}) {
 		let pos = this.entries.length
@@ -76,7 +80,7 @@ class FAT {
 		// files should have sizes before this is called
 		this.dataSectors = sectorsNeeded(this.entries)
 		let minimumClusters = this.entries.filter(e=>e.type!=='link').length
-		this.clusterSize = calcClusterSize(this.dataSectors, minimumClusters)
+		this.clusterSize = calcClusterSize(this.dataSectors + Math.ceil(this.extraSpace/512), minimumClusters)
 	}
 	assignFileLocations() {
 		// files should have sizes before this is called
@@ -99,7 +103,7 @@ class FAT {
 		})
 		this.dataClusters = cluster - 1
 		if (this.dataClusters < 4085)
-			this.dataClusters = 4085
+			this.extraSpace = Math.max(this.extraSpace, (4085 - this.dataClusters) * csize)
 		return files
 	}
 	makeDirBuffer(dir) {
@@ -144,8 +148,11 @@ class FAT {
 
 		return buffer
 	}
+	emptyClusters() {
+		return Math.ceil(this.extraSpace / 512 / this.clusterSize)
+	}
 	fatSectors() {
-		return Math.ceil(this.dataClusters * 16 / 512)
+		return Math.ceil((this.dataClusters + this.emptyClusters())* 16 / 512)
 	}
 	rootDirSectors() {
 		return this.maxRootEntries * 32 / 512
@@ -159,9 +166,10 @@ class FAT {
 		// Not suitable as there are cases where trailing zeros are necessary
 		// let datasectors = this.dataSectors()
 		let dataareasectors = this.dataClusters * this.clusterSize
-		debug(`Counting all Sectors. ${fatsectors}, ${rootdirsectors}, ${dataareasectors}`)
+		let emptysectors = this.emptyClusters() * this.clusterSize
+		debug(`Counting all Sectors. ${fatsectors}, ${rootdirsectors}, ${dataareasectors}, ${emptysectors}`)
 
-		return this.reservedSectors + (fatsectors * this.fatCount) + rootdirsectors + dataareasectors
+		return this.reservedSectors + (fatsectors * this.fatCount) + rootdirsectors + dataareasectors + emptysectors
 	}
 	rootDirLocation() {
 		return 512 * (this.reservedSectors + this.fatCount * this.fatSectors())
