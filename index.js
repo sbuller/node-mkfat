@@ -4,6 +4,25 @@ const path = require('path')
 const {Writable} = require('stream')
 const debug = require('debug')('nos-mkfat')
 
+class Dir {
+	constructor(entry, newEntry) {
+		this._entry = entry
+		this._newEntry = newEntry
+	}
+	dir(name) {
+		let entry = this._newEntry(name, 'dir', this._entry, {entries:[]})
+		return new Dir(entry, this._newEntry)
+	}
+	file(name, fd) {
+		this._newEntry(name, 'file', this._entry, {fd})
+		return this
+	}
+	link(name, target) {
+		this._newEntry(name, 'link', this._entry, {target})
+		return this
+	}
+}
+
 // Just enough FAT. We're only targeting FAT16, file times and attributes are
 // not important and can be left as zero
 class FAT {
@@ -13,46 +32,33 @@ class FAT {
 		this.name = Buffer.alloc(11, ' ')
 		this.name.write(params.name || 'nos-fat')
 		this.entries = []
-		this.root  = {name:'', parent:null, entries:[], type:'dir'}
-		this.pwd   = this.root
+		this._root  = {name:'', parent:null, entries:[], type:'dir'}
 		this.fatCount = params.fatCount || 1
 		this.reservedSectors = params.reservedSectors || 1
 		this.mediaDescriptor = params.mediaDescriptor || 0xF8
 		this.extraSpace = params.extraSpace || 0
 	}
+	root() {
+		return new Dir(this._root, (...args)=>this.entry(...args))
+	}
 	addSpace(bytes) {
 		this.extraSpace += bytes
 	}
-	entry(name, type, {fd, target, entries, parent}) {
+	entry(name, type, parent, {fd, target, entries}) {
 		let pos = this.entries.length
 		let entry = {type, name, pos, fd, target, entries, parent, location:undefined}
 		this.entries.push(entry)
-		this.pwd.entries.push(entry)
+		parent.entries.push(entry)
+		if (type === 'dir') {
+			this.entry('.', 'link', entry, {target:entry})
+			this.entry('..', 'link', entry, {target:entry.parent})
+		}
 		return entry
-	}
-	file(name, fd) {
-		this.entry(name, 'file', {fd})
-		return this
-	}
-	link(name, target) {
-		this.entry(name, 'link', {target})
-		return this
-	}
-	dir(name) {
-		let entry = this.entry(name, 'dir', {entries:[], parent:this.pwd})
-		this.pwd = entry
-		this.link('.', entry)
-		this.link('..', entry.parent)
-		return this
-	}
-	dotdot() {
-		this.pwd = this.pwd.parent || this.root
-		return this
 	}
 	getFile(target) {
 		if (!(typeof target === 'string')) return target
 		let segments = target.split('/')
-		let dir = this.root
+		let dir = this._root
 		if (segments[0] === '') {
 			// omit the first entry (root), and last entry (filename)
 			segments.slice(1, -1).forEach(segment=>{
@@ -117,8 +123,8 @@ class FAT {
 	}
 	makeRootDir() {
 		// files should have sizes and locations before this is called
-		this.root.size = this.root.entries.length * 32
-		let rootDir = this.makeDirBuffer(this.root)
+		this._root.size = this._root.entries.length * 32
+		let rootDir = this.makeDirBuffer(this._root)
 		this.maxRootEntries = rootDir.length / 32
 		return rootDir
 	}
