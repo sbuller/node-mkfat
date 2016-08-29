@@ -37,6 +37,7 @@ class FAT {
 		this.reservedSectors = params.reservedSectors || 1
 		this.mediaDescriptor = params.mediaDescriptor || 0xF8
 		this.extraSpace = params.extraSpace || 0
+		this.defaultTime = params.defaultTime || undefined
 	}
 	root() {
 		return new Dir(this._root, (...args)=>this.entry(...args))
@@ -334,7 +335,11 @@ function dirEntry({name, location, size, type, attributes, target}) {
 	let entry = Buffer.alloc(32)
 
 	nameBuf.copy(entry)
-	entry.writeUInt16LE(location, 26)
+
+	let locationLow = location && 0xffff
+	let locationHigh = location >> 16
+	entry.writeUInt16LE(locationHigh, 0x14)
+	entry.writeUInt16LE(locationLow, 26)
 	entry.writeUInt32LE(size, 28)
 
 	let attr = 0
@@ -354,22 +359,25 @@ function dirEntry({name, location, size, type, attributes, target}) {
 	debug('entry %s', name)
 	debug(entry.toString('hex'), entry.length)
 
-	/*
-	time = time || new Date
-	attribute = attribute || 0
+	time = time || this.defaultTime
+	if (time instanceof Date) {
+		let fattime = time.getUTCHours() << 11
+		fattime += time.getUTCMinutes() << 5
+		fattime += time.getUTCSeconds() / 2
 
-	let fattime = time.getUTCHours() << 11
-	fattime += time.getMinutes() << 5
-	fattime += time.getSeconds() / 2
+		let fatdate = (time.getUTCFullYear() - 1980) << 9
+		fatdate += (time.getUTCMonth() + 1) << 5
+		fatdate += time.getUTCDay() + 1
 
-	let fatdate = (time.getUTCFullYear() - 1980) << 9
-	fatdate += (time.getUTCMonth() + 1) << 5
-	fatdate += time.getUTCDay() + 1
+		let ctime_hundredths = time.getUTCSeconds() % 2 + Math.floor(time.getUTCMilliseconds() / 10)
 
-	entry.writeUInt8(attribute, 11)
-	entry.writeUInt16LE(fattime, 22)
-	entry.writeUInt16LE(fatdate, 24)
-	*/
+		entry.writeUInt8(ctime_hundredths, 0x0d)
+		entry.writeUInt16LE(fattime, 0x0e) //c_time
+		entry.writeUInt16LE(fatdate, 0x10) //c_date
+		entry.writeUInt16LE(fatdate, 0x12) //a_date
+		entry.writeUInt16LE(fattime, 22) //m_time
+		entry.writeUInt16LE(fatdate, 24) //m_date
+	}
 
 	return entry
 }
