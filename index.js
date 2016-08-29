@@ -117,12 +117,14 @@ class FAT {
 	}
 	makeDirBuffer(dir) {
 		// files should have sizes and locations before this is called
-		let sectors = Math.ceil(dir.size / 512)
-		let buffer = Buffer.alloc(sectors * 512)
+		let buffers = []
 		dir.entries.forEach((entry,i)=>{
-			dirEntry(entry).copy(buffer, i*32)
+			if (lfnCount(entry.name) > 0) {
+				buffers.push(makeLfnEntries(entry))
+			}
+			buffers.push(dirEntry(entry))
 		})
-		return buffer
+		return Buffer.concat(buffers)
 	}
 	makeRootDir() {
 		// files should have sizes and locations before this is called
@@ -315,7 +317,7 @@ function filesWithSizes(files) {
 		}))
 	)
 }
-function dirEntry({name, location, size, type, attributes, target}) {
+function dirEntry({name, location, size, type, attributes, target, time}) {
 	attributes = attributes || {}
 	if (type === 'link' && target.type === 'dir') type = 'dir'
 	attributes.type = type
