@@ -307,12 +307,19 @@ function writeName(name, ext) {
 
 function fdSize(fd) {
 	return new Promise((resolve,reject)=>{
-		fs.fstat(fd, (err,stat)=>{
-			if (err)
-				reject(err)
-			else
-				resolve(stat.size)
-		})
+		if (fd instanceof Promise) {
+			fd.then(stat).catch(debug)
+		} else {
+			stat(fd)
+		}
+		function stat(fd) {
+			fs.fstat(fd, (err,stat)=>{
+				if (err)
+					reject(err)
+				else
+					resolve(stat.size)
+			})
+		}
 	})
 }
 
@@ -442,16 +449,24 @@ function writeFile(inFD, outFD, location) {
 	let resolve, reject
 	let promise = new Promise((res,rej)=>{resolve=res; reject=rej})
 
-	let input = fs.createReadStream(null,{fd:inFD})
-	let pos = 0
-	let output = new Writable({
-		write(chunk, encoding, callback) {
-			fs.write(outFD, chunk, 0, chunk.length, location + pos, callback)
-			pos = pos + chunk.length
-		}
-	})
+	if (inFD instanceof Promise) {
+		inFD.then(write).catch(debug)
+	} else {
+		write(inFD)
+	}
 
-	input.pipe(output).on('end', resolve).on('error', reject)
+	function write(fd) {
+		let input = fs.createReadStream(null,{fd})
+		let pos = 0
+		let output = new Writable({
+			write(chunk, encoding, callback) {
+				fs.write(outFD, chunk, 0, chunk.length, location + pos, callback)
+				pos = pos + chunk.length
+			}
+		})
+
+		input.pipe(output).on('end', resolve).on('error', reject)
+	}
 
 	return promise
 }
