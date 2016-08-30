@@ -83,6 +83,7 @@ class FAT {
 				let lfnEntryCount = entry.entries.
 					map(sub=>lfnCount(sub.name)).
 					reduce((a,b)=>a+b, 0)
+				debug(lfnEntryCount)
 				entry.size = (entry.entries.length + lfnEntryCount) * 32
 			}
 		})
@@ -92,6 +93,7 @@ class FAT {
 		this.dataSectors = sectorsNeeded(this.entries)
 		let minimumClusters = this.entries.filter(e=>e.type!=='link').length
 		this.clusterSize = calcClusterSize(this.dataSectors + Math.ceil(this.extraSpace/512), minimumClusters)
+		debug('Calculated a clusterSize of %s', this.clusterSize)
 	}
 	assignFileLocations() {
 		// files should have sizes before this is called
@@ -122,7 +124,7 @@ class FAT {
 		let buffers = []
 		dir.entries.forEach((entry,i)=>{
 			if (lfnCount(entry.name) > 0) {
-				buffers.push(makeLfnEntries(entry))
+				buffers.push(makeLfnEntries(entry.name))
 			}
 			buffers.push(dirEntry(entry))
 		})
@@ -137,6 +139,7 @@ class FAT {
 		rootEntries += lfnEntryCount
 		let rootSectors = Math.ceil(rootEntries / 16)
 		this.maxRootEntries = 16 * rootSectors
+		this._root.size = rootSectors * 512
 		let rootDir = this.makeDirBuffer(this._root)
 		return rootDir
 	}
@@ -292,6 +295,7 @@ class FAT {
 }
 
 function writeName(name, ext) {
+	name = name.replace(/ /g, '').toUpperCase()
 	if (!ext) {
 		ext = path.extname(name)
 		name = path.basename(name, ext)
@@ -334,7 +338,6 @@ function dirEntry({name, location, size, type, attributes, target, time}) {
 	} else {
 		debug(`Non-uppercase name ${name}`)
 	}
-	name = name.toUpperCase()
 
 	if (type === 'dir') {
 		size = 0
@@ -453,36 +456,44 @@ function lfnCount(name) {
 
 	// ext will have an initial '.'
 	if (basename.length > 8 || ext.length > 4)
-		return Math.ceil(name / 13)
+		return Math.ceil(name.length / 13)
 	else
 		return 0
 }
-function makeLfnEntry(nameBuffer, pos) {
+function makeLfnEntry(nameBuffer, pos, csum) {
 	let entry = Buffer.alloc(32)
 	entry[0x00] = pos
 	entry[0x0b] = 0x0f
-	entry[0x0d] = 0x98
+	entry[0x0d] = csum
 	// bytes 0x0c, 0x1a & 0x1b should remain as 0x00.
-	nameBuffer.copy(entry, 0x01, 0x00, 0x10)
-	nameBuffer.copy(entry, 0x0e, 0x10, 0x0c)
-	nameBuffer.copy(entry, 0x1c, 0x1c, 0x04)
+	nameBuffer.copy(entry, 0x01, 0x00, 0x0a)
+	nameBuffer.copy(entry, 0x0e, 0x0a, 0x16)
+	nameBuffer.copy(entry, 0x1c, 0x16, 0x1a)
+	debug("mle:", nameBuffer, entry)
+	return entry
 }
 function makeLfnEntries(name) {
 	let lfnC = lfnCount(name)
 	let ret = Buffer.alloc(lfnC * 32)
 	let ucs2 = Buffer.from(name, 'ucs2')
+	let dosname = writeName(name)
+	let csum = dosname[0]
+	for (let i=1; i<11; i++) {
+		let rotated = (csum << 7) | (csum >>> 1) & 0xFF
+		csum = (rotated + dosname[i]) & 0xFF
+	}
 
 	for (let i=0; i<lfnC; i++) {
 		let order = i?(lfnC - i):(lfnC + 0x40)
-		let nameBuf = Buffer.alloc(32, 0xff)
-		let start = (lfnC - i) * 32
-		ucs2.copy(nameBuf, 0, start, 32)
+		let nameBuf = Buffer.alloc(26, 0xff)
+		let start = (lfnC - i - 1) * 26
+		ucs2.copy(nameBuf, 0, start, start + 26)
 		if (i === 0) {
-			let shortfall = lfnC * 32 - ucs2.length
-			nameBuf[32 - shortfall] = 0x00
-			nameBuf[31 - shortfall] = 0x00
+			let shortfall = lfnC * 26 - ucs2.length
+			nameBuf[27 - shortfall] = 0x00
+			nameBuf[26 - shortfall] = 0x00
 		}
-		let entry = makeLfnEntry(nameBuf, order)
+		let entry = makeLfnEntry(nameBuf, order, csum)
 		entry.copy(ret, i*32)
 	}
 	return ret

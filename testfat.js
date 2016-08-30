@@ -16,6 +16,7 @@ root.file('ldlinux.c32', c32).file('ldlinux.sys', sys).file('baz', baz)
 
 foo.link('bar', '/baz')
 xyzzy.link('bar', '/foo/bar')
+xyzzy.link('a really long file name.test', '/foo/bar')
 
 
 fat.makeDisk(out).catch(e=>console.log(e))
