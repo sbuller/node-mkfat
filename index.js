@@ -128,9 +128,9 @@ class FAT {
 	}
 	makeRootDir() {
 		// files should have sizes and locations before this is called
-		this._root.size = this._root.entries.length * 32
+		let rootSectors = Math.ceil(this._root.entries.length / 16)
 		let rootDir = this.makeDirBuffer(this._root)
-		this.maxRootEntries = rootDir.length / 32
+		this.maxRootEntries = 16 * rootSectors
 		return rootDir
 	}
 	makeFAT() {
