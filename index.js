@@ -23,8 +23,6 @@ class Dir {
 	}
 }
 
-// Just enough FAT. We're only targeting FAT16, file times and attributes are
-// not important and can be left as zero
 class FAT {
 	constructor(params) {
 		params = params || {}
@@ -333,11 +331,19 @@ function dirEntry({name, location, size, type, attributes, target, time}) {
 	if (type === 'link' && target.type === 'dir') type = 'dir'
 	attributes.type = type
 
-	if (name === name.toLowerCase()) {
-		attributes.lowercase = true
-	} else {
-		debug(`Non-uppercase name ${name}`)
-	}
+	let ext = path.extname(name)
+	let base = path.basename(name, ext)
+
+	if (ext === ext.toLowerCase())
+		attributes.lowercase_ext = true
+	else if (ext !== ext.toUpperCase())
+		attributes.mixed_ext = true
+
+	if (base === base.toLowerCase())
+		attributes.lowercase_base = true
+	else if (base !== base.toUpperCase())
+		attributes.mixed_base = true
+
 
 	if (type === 'dir') {
 		size = 0
@@ -368,9 +374,8 @@ function dirEntry({name, location, size, type, attributes, target, time}) {
 	attr |= attributes.archive && 0x20
 	entry.writeUInt8(attr, 11)
 
-	if (attributes.lowercase) {
-		entry.writeUInt8(16|8, 12) // bits 2³ and 2⁴ mark lowercase basename and extension respectively
-	}
+	let lowercaseAttr = (attributes.lowercase_ext && 16) | (attributes.lowercase_base && 8)
+	entry.writeUInt8(lowercaseAttr, 12)
 
 	debug('entry %s', name)
 	debug(entry.toString('hex'), entry.length)
