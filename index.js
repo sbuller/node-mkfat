@@ -80,7 +80,9 @@ class FAT {
 	calcDirSizes() {
 		this.entries.forEach(entry=>{
 			if (entry.type === 'dir') {
-				let lfnEntryCount = lfnCount(entry.name)
+				let lfnEntryCount = entry.entries.
+					map(sub=>lfnCount(sub.name)).
+					reduce((a,b)=>a+b, 0)
 				entry.size = (entry.entries.length + lfnEntryCount) * 32
 			}
 		})
@@ -128,9 +130,14 @@ class FAT {
 	}
 	makeRootDir() {
 		// files should have sizes and locations before this is called
-		let rootSectors = Math.ceil(this._root.entries.length / 16)
-		let rootDir = this.makeDirBuffer(this._root)
+		let rootEntries = this._root.entries.length
+		let lfnEntryCount = this._root.entries.
+			map(sub=>lfnCount(sub.name)).
+			reduce((a,b)=>a+b, 0)
+		rootEntries += lfnEntryCount
+		let rootSectors = Math.ceil(rootEntries / 16)
 		this.maxRootEntries = 16 * rootSectors
+		let rootDir = this.makeDirBuffer(this._root)
 		return rootDir
 	}
 	makeFAT() {
