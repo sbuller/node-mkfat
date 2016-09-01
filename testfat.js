@@ -18,5 +18,7 @@ foo.link('bar', '/baz')
 xyzzy.link('BAR.bar', '/foo/bar')
 xyzzy.link('a really long file name.test', '/foo/bar')
 
+root.dir('boot').dir('syslinux')
+
 
 fat.makeDisk(out).catch(e=>console.log(e))

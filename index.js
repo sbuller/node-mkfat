@@ -106,6 +106,7 @@ class FAT {
 			} else {
 				// The linked file must be declared before the link, or this will fail
 				let file = this.getFile(entry.target)
+				entry.target = file
 				entry.location = file.location
 				// I'm assuming that by now nothing is going to be messeg up by a
 				// link having a size
@@ -160,7 +161,7 @@ class FAT {
 		this.entries.forEach(entry=>{
 			if (entry.type === 'link') return
 			let lastCluster = entry.location
-			lastCluster += Math.floor(entry.size / 512 / this.clusterSize)
+			lastCluster += Math.ceil(entry.size / 512 / this.clusterSize) - 1
 			buffer.writeUInt16LE(0xFFFF, lastCluster * 2) // two bytes per entry
 			debug(`Terminated entry ${entry.name} at cluster ${lastCluster}.`)
 		})
@@ -307,11 +308,7 @@ function writeName(name, ext) {
 
 function fdSize(fd) {
 	return new Promise((resolve,reject)=>{
-		if (fd instanceof Promise) {
-			fd.then(stat).catch(debug)
-		} else {
-			stat(fd)
-		}
+		Promise.resolve(fd).then(stat).catch(debug)
 		function stat(fd) {
 			fs.fstat(fd, (err,stat)=>{
 				if (err)
@@ -335,6 +332,7 @@ function filesWithSizes(files) {
 }
 function dirEntry({name, location, size, type, attributes, target, time}) {
 	attributes = attributes || {}
+	if (type === 'link') debug('link %s %s %s', name, type, target.type)
 	if (type === 'link' && target.type === 'dir') type = 'dir'
 	attributes.type = type
 
@@ -350,11 +348,6 @@ function dirEntry({name, location, size, type, attributes, target, time}) {
 		attributes.lowercase_base = true
 	else if (base !== base.toUpperCase())
 		attributes.mixed_base = true
-
-
-	if (type === 'dir') {
-		size = 0
-	}
 
 	let nameBuf = writeName(name)
 	let entry = Buffer.alloc(32)
