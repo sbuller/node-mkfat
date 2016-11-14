@@ -260,32 +260,34 @@ class FAT {
 			return writeBuffer(Buffer.alloc(1), outputFD, lastByte).then(()=>{ // pre-allocate space, including final padding
 				debug(`Pre allocated space by writing a 0 at ${lastByte}`)
 				let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
+
 				debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
-				let filesWritePromises = this.entries.map(entry=>{
-					if (entry.type === 'link') return Promise.resolve()
+
+				let filesWriteActions = this.entries.map(entry=>{
+					if (entry.type === 'link') return ()=>Promise.resolve()
 					let entryStart = dataAreaStart + 512 * this.clusterSize * (entry.location-2)
 					debug(`Writing entry ${entry.name} at offset ${entryStart}`)
 					if (entry.type === 'file')
-						return writeFile(entry.fd, outputFD, entryStart)
+						return ()=>writeFile(entry.fd, outputFD, entryStart)
 					if (entry.type === 'dir')
-						return writeBuffer(this.makeDirBuffer(entry), outputFD, entryStart)
+						return ()=>writeBuffer(this.makeDirBuffer(entry), outputFD, entryStart)
 				})
 				debug(`Writing root directory at ${this.rootDirLocation()}`)
-				let rootWritePromise = writeBuffer(rootDir, outputFD, this.rootDirLocation())
-				let bssWritePromise = writeBuffer(bss, outputFD, 0)
+				let rootWriteAction = ()=>writeBuffer(rootDir, outputFD, this.rootDirLocation())
+				let bssWriteAction = ()=>writeBuffer(bss, outputFD, 0)
 				let fatSize = this.fatSectors()
-				let fatWritePromises = []
+				let fatWriteActions = []
 				for (let i=0; i<this.fatCount; i++) {
-					let p = writeBuffer(fat, outputFD, this.reservedSectors * 512 + i*fatSize)
-					fatWritePromises.push(p)
+					let p = ()=>writeBuffer(fat, outputFD, this.reservedSectors * 512 + i*fatSize)
+					fatWriteActions.push(p)
 				}
 
-				let outputPromises = filesWritePromises
-				outputPromises.push(rootWritePromise)
-				outputPromises.push(bssWritePromise)
-				outputPromises.push(...fatWritePromises)
+				let outputActions = filesWriteActions
+				outputActions.push(rootWriteAction)
+				outputActions.push(bssWriteAction)
+				outputActions.push(...fatWriteActions)
 
-				return Promise.all(outputPromises)
+				return sequence(outputActions)
 			})
 		})
 
@@ -445,7 +447,7 @@ function writeFile(inFD, outFD, location) {
 	if (inFD instanceof Promise) {
 		inFD.then(write).catch(debug)
 	} else {
-		write(inFD)
+		process.nextTick(()=>write(inFD))
 	}
 
 	function write(fd) {
@@ -458,7 +460,7 @@ function writeFile(inFD, outFD, location) {
 			}
 		})
 
-		input.pipe(output).on('end', resolve).on('error', reject)
+		input.pipe(output).on('finish', resolve).on('error', reject)
 	}
 
 	return promise
@@ -510,6 +512,24 @@ function makeLfnEntries(name) {
 		entry.copy(ret, i*32)
 	}
 	return ret
+}
+
+function sequence(actions) {
+	return new Promise((resolve, reject)=>{
+		consumeAction()
+		function consumeAction() {
+			debug(`CONSUME [${actions.length}]`)
+			if (actions.length === 0) return resolve()
+			let action = actions.shift()
+			debug("ACTION", action)
+			let p = action()
+			p.then(consumeAction, error)
+		}
+		function error(e) {
+			debug(e)
+			reject(e)
+		}
+	})
 }
 
 
