@@ -1,8 +1,8 @@
 let FAT = require('./index')
 let fs = require('fs')
-let c32 = fs.openSync('./ldlinux.c32', 'r')
-let sys = fs.openSync('./ldlinux.sys', 'r')
-let baz = fs.openSync('./README.md', 'r')
+let c32 = './ldlinux.c32'
+let sys = './ldlinux.sys'
+let baz = './README.md'
 
 let out = fs.openSync('./test.img', 'w')
 
@@ -10,9 +10,9 @@ let c32stat = fs.statSync(c32)
 let sysstat = fs.statSync(sys)
 let bazstat = fs.statSync(baz)
 
-let c32stream = fs.createReadStream(null, {fd: c32})
-let sysstream = fs.createReadStream(null, {fd: sys})
-let bazstream = fs.createReadStream(null, {fd: baz})
+let c32stream = fs.createReadStream(c32)
+let sysstream = fs.createReadStream(sys)
+let bazstream = fs.createReadStream(baz)
 
 let fat = new FAT
 

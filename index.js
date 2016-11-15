@@ -1,7 +1,7 @@
 const fs = require('fs')
 const crypto = require('crypto')
 const path = require('path')
-const {Writable} = require('stream')
+const {Writable, PassThrough} = require('stream')
 const debug = require('debug')('nos-mkfat')
 
 class FAT {
@@ -11,66 +11,64 @@ class FAT {
 		this.name = Buffer.alloc(11, ' ')
 		this.name.write(params.name || 'nos-fat')
 		this.entries = []
-		this._root  = {name:'', parent:null, entries:[], type:'dir'}
 		this.fatCount = params.fatCount || 1
 		this.reservedSectors = params.reservedSectors || 1
 		this.mediaDescriptor = params.mediaDescriptor || 0xF8
 		this.extraSpace = params.extraSpace || 0
 		this.defaultTime = params.defaultTime || undefined
 	}
-	root() {
-		return new Dir(this._root, (...args)=>this.entry(...args))
-	}
-	addSpace(bytes) {
+	reserveSpace(bytes) {
 		this.extraSpace += bytes
 	}
-	entry(name, type, parent, {fd, target, entries}) {
-		let pos = this.entries.length
-		let entry = {type, name, pos, fd, target, entries, parent, location:undefined}
-		this.entries.push(entry)
-		parent.entries.push(entry)
-		if (type === 'dir') {
-			this.entry('.', 'link', entry, {target:entry})
-			this.entry('..', 'link', entry, {target:entry.parent})
-		}
-		return entry
+	entry(stat, data) {
+		stat = Object.assign({
+			name: '/',
+			size: 0,
+			type: 'file'
+		}, stat)
+
+		if (!stat.name.startsWith('/'))
+			stat.name = '/' + stat.name
+
+		if (stat.type === 'file' && !data)
+			data = new PassThrough
+
+		this.entries.push({stat, data})
+		return data
 	}
 	getFile(target) {
-		if (!(typeof target === 'string')) return target
-		let segments = target.split('/')
-		let dir = this._root
-		if (segments[0] === '') {
-			// omit the first entry (root), and last entry (filename)
-			segments.slice(1, -1).forEach(segment=>{
-				let dir_entry = dir.entries.find(({name})=>name===segment)
-				if (!dir_entry) {
-					throw new Error(`Target not found at '${segment}', in '${target}'.`)
-				} else {
-					dir = this.entries[dir_entry.pos]
-				}
-			})
+		return this.entries.find(({stat:{name}})=>name===target)
+	}
+	dirEntries(dirPath) {
+		let slicePos = dirPath.length
+
+		function matchDir({stat}) {
+			let path = stat.name
+			if (path.slice(0, slicePos) !== dirPath) return false
+
+			let relative = path.slice(slicePos)
+			return (relative && relative.indexOf('/') === -1)
 		}
-		// I'm intentionally ignoring more complicated relative paths
-		// This handles immediate filenames and absolute paths
-		let filename = segments.pop()
-		let file = dir.entries.find(({name})=>name===filename)
-		return file
+		return this.entries.filter(matchDir)
+	}
+	directories() {
+		return this.entries.filter(({stat:{type}})=>type==='directory')
 	}
 	calcDirSizes() {
-		this.entries.forEach(entry=>{
-			if (entry.type === 'dir') {
-				let lfnEntryCount = entry.entries.
-					map(sub=>lfnCount(sub.name)).
-					reduce((a,b)=>a+b, 0)
-				debug(lfnEntryCount)
-				entry.size = (entry.entries.length + lfnEntryCount) * 32
-			}
+		this.directories().forEach(({stat:dirstat})=>{
+			// Yay! O(n²) on this.entries. (Not Yay)
+			let entries = this.dirEntries(dirstat.name)
+			let lfnEntryCount = entries.
+				map(sub=>lfnCount(sub.name)).
+				reduce((a,b)=>a+b, 0)
+			debug(lfnEntryCount)
+			dirstat.size =  (entries.length + lfnEntryCount) * 32
 		})
 	}
 	assignClusterSize() {
 		// files should have sizes before this is called
 		this.dataSectors = sectorsNeeded(this.entries)
-		let minimumClusters = this.entries.filter(e=>e.type!=='link').length
+		let minimumClusters = this.entries.filter(e=>e.stat.type!=='link').length
 		this.clusterSize = calcClusterSize(this.dataSectors + Math.ceil(this.extraSpace/512), minimumClusters)
 		debug('Calculated a clusterSize of %s', this.clusterSize)
 	}
@@ -81,17 +79,18 @@ class FAT {
 		let csize = this.clusterSize * 512
 		let cluster = 2
 		this.entries.forEach(entry=>{
-			if (entry.type !== 'link') {
-				entry.location = cluster
-				cluster += Math.ceil(entry.size/csize)
+			let stat = entry.stat
+			if (stat.type !== 'link') {
+				stat.cluster = cluster
+				cluster += Math.ceil(stat.size/csize)
 			} else {
 				// The linked file must be declared before the link, or this will fail
-				let file = this.getFile(entry.target)
-				entry.target = file
-				entry.location = file.location
+				let file = this.getFile(entry.data)
+				stat.target = file.stat
+				stat.cluster = file.stat.cluster
 				// I'm assuming that by now nothing is going to be messeg up by a
 				// link having a size
-				entry.size = file.size
+				stat.size = file.stat.size
 			}
 		})
 		this.dataClusters = cluster - 1
@@ -102,9 +101,9 @@ class FAT {
 	makeDirBuffer(dir) {
 		// files should have sizes and locations before this is called
 		let buffers = []
-		dir.entries.forEach((entry,i)=>{
-			if (lfnCount(entry.name) > 0) {
-				buffers.push(makeLfnEntries(entry.name))
+		this.dirEntries(dir.stat.name).forEach((entry,i)=>{
+			if (lfnCount(entry.stat.name) > 0) {
+				buffers.push(makeLfnEntries(entry.stat.name))
 			}
 			buffers.push(dirEntry(entry))
 		})
@@ -112,16 +111,14 @@ class FAT {
 	}
 	makeRootDir() {
 		// files should have sizes and locations before this is called
-		let rootEntries = this._root.entries.length
-		let lfnEntryCount = this._root.entries.
-			map(sub=>lfnCount(sub.name)).
+		let rootEntries = this.dirEntries('/')
+		let lfnEntryCount = rootEntries.
+			map(sub=>lfnCount(sub.stat.name)).
 			reduce((a,b)=>a+b, 0)
 		rootEntries += lfnEntryCount
-		let rootSectors = Math.ceil(rootEntries / 16)
+		let rootSectors = Math.ceil(rootEntries.length / 16)
 		this.maxRootEntries = 16 * rootSectors
-		this._root.size = rootSectors * 512
-		let rootDir = this.makeDirBuffer(this._root)
-		return rootDir
+		return this.makeDirBuffer({stat:{name:'/'}})
 	}
 	makeFAT() {
 		let buffer = Buffer.alloc(this.dataClusters * 16)
@@ -140,11 +137,11 @@ class FAT {
 		}
 
 		this.entries.forEach(entry=>{
-			if (entry.type === 'link') return
-			let lastCluster = entry.location
-			lastCluster += Math.ceil(entry.size / 512 / this.clusterSize) - 1
+			if (entry.stat.type === 'link') return
+			let lastCluster = entry.stat.cluster
+			lastCluster += Math.ceil(entry.stat.size / 512 / this.clusterSize) - 1
 			buffer.writeUInt16LE(0xFFFF, lastCluster * 2) // two bytes per entry
-			debug(`Terminated entry ${entry.name} at cluster ${lastCluster}.`)
+			debug(`Terminated entry ${entry.stat.name} at cluster ${lastCluster}.`)
 		})
 
 		return buffer
@@ -219,57 +216,53 @@ class FAT {
 	makeDisk(outputFD) {
 		this.outputFD = outputFD
 
-		let filesready = filesWithSizes(this.entries.filter(e=>e.type==='file'))
 		this.calcDirSizes()
+		this.assignClusterSize()
+		this.assignFileLocations()
+		debug('File locations assigned')
 
-		let datawritten = filesready.then(files=>{
-			debug('File sizes found')
-			this.assignClusterSize()
-			this.assignFileLocations()
-			debug('File locations assigned')
-			debug(files)
+		let rootDir = this.makeRootDir()
+		let bss = this.makeBootSector()
+		let fat = this.makeFAT()
+		let lastByte = this.countAllSectors() * 512 - 1
 
-			let rootDir = this.makeRootDir()
-			let bss = this.makeBootSector()
-			let fat = this.makeFAT()
-			let lastByte = this.countAllSectors() * 512 - 1
-			debug('root directory')
-			debug(rootDir.toString('hex'))
-			debug('FAT')
-			//debug(fat.toString('hex'))
+		debug('root directory')
+		debug(rootDir.toString('hex'))
 
-			return writeBuffer(Buffer.alloc(1), outputFD, lastByte).then(()=>{ // pre-allocate space, including final padding
-				debug(`Pre allocated space by writing a 0 at ${lastByte}`)
-				let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
+		debug('FAT')
+		//debug(fat.toString('hex'))
 
-				debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
+		let datawritten = writeBuffer(Buffer.alloc(1), outputFD, lastByte).then(()=>{ // pre-allocate space, including final padding
+			debug(`Pre allocated space by writing a 0 at ${lastByte}`)
+			let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
 
-				let filesWriteActions = this.entries.map(entry=>{
-					if (entry.type === 'link') return ()=>Promise.resolve()
-					let entryStart = dataAreaStart + 512 * this.clusterSize * (entry.location-2)
-					debug(`Writing entry ${entry.name} at offset ${entryStart}`)
-					if (entry.type === 'file')
-						return ()=>writeFile(entry.fd, outputFD, entryStart)
-					if (entry.type === 'dir')
-						return ()=>writeBuffer(this.makeDirBuffer(entry), outputFD, entryStart)
-				})
-				debug(`Writing root directory at ${this.rootDirLocation()}`)
-				let rootWriteAction = ()=>writeBuffer(rootDir, outputFD, this.rootDirLocation())
-				let bssWriteAction = ()=>writeBuffer(bss, outputFD, 0)
-				let fatSize = this.fatSectors()
-				let fatWriteActions = []
-				for (let i=0; i<this.fatCount; i++) {
-					let p = ()=>writeBuffer(fat, outputFD, this.reservedSectors * 512 + i*fatSize)
-					fatWriteActions.push(p)
-				}
+			debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
 
-				let outputActions = filesWriteActions
-				outputActions.push(rootWriteAction)
-				outputActions.push(bssWriteAction)
-				outputActions.push(...fatWriteActions)
-
-				return sequence(outputActions)
+			let filesWriteActions = this.entries.map(entry=>{
+				if (entry.stat.type === 'link') return ()=>Promise.resolve()
+				let entryStart = dataAreaStart + 512 * this.clusterSize * (entry.stat.cluster-2)
+				debug(`Writing entry ${entry.stat.name} at offset ${entryStart}`)
+				if (entry.stat.type === 'file')
+					return ()=>writeFile(entry.data, outputFD, entryStart)
+				if (entry.stat.type === 'directory')
+					return ()=>writeBuffer(this.makeDirBuffer(entry), outputFD, entryStart)
 			})
+			debug(`Writing root directory at ${this.rootDirLocation()}`)
+			let rootWriteAction = ()=>writeBuffer(rootDir, outputFD, this.rootDirLocation())
+			let bssWriteAction = ()=>writeBuffer(bss, outputFD, 0)
+			let fatSize = this.fatSectors()
+			let fatWriteActions = []
+			for (let i=0; i<this.fatCount; i++) {
+				let p = ()=>writeBuffer(fat, outputFD, this.reservedSectors * 512 + i*fatSize)
+				fatWriteActions.push(p)
+			}
+
+			let outputActions = filesWriteActions
+			outputActions.push(rootWriteAction)
+			outputActions.push(bssWriteAction)
+			outputActions.push(...fatWriteActions)
+
+			return sequence(outputActions)
 		})
 
 		return datawritten
@@ -303,34 +296,29 @@ function fdSize(fd) {
 	})
 }
 
-function filesWithSizes(files) {
-	let sizes = files.map(file=>fdSize(file.fd))
-	return (
-		Promise.all(sizes)
-		.then(sizes=>sizes.map( (size,i)=>{
-			files[i].size = size
-			return files[i]
-		}))
-	)
-}
-function dirEntry({name, location, size, type, attributes, target, time}) {
-	attributes = attributes || {}
-	if (type === 'link') debug('link %s %s %s', name, type, target.type)
-	if (type === 'link' && target.type === 'dir') type = 'dir'
-	attributes.type = type
+function dirEntry({stat}) {
+	let {name, cluster, size, type, target, mtime:time} = stat
+
+	if (type === 'link') debug('link %s %s %s', name, type, target.stat.type)
+	if (type === 'link' && target.stat.type === 'directory') type = 'directory'
 
 	let ext = path.extname(name)
 	let base = path.basename(name, ext)
 
+	let lowercase_ext = false
+	let mixed_ext = false
+	let lowercase_base = false
+	let mixed_base = false
+
 	if (ext === ext.toLowerCase())
-		attributes.lowercase_ext = true
+		lowercase_ext = true
 	else if (ext !== ext.toUpperCase())
-		attributes.mixed_ext = true
+		mixed_ext = true
 
 	if (base === base.toLowerCase())
-		attributes.lowercase_base = true
+		lowercase_base = true
 	else if (base !== base.toUpperCase())
-		attributes.mixed_base = true
+		mixed_base = true
 
 	let nameBuf = writeName(name)
 	let entry = Buffer.alloc(32)
@@ -341,23 +329,23 @@ function dirEntry({name, location, size, type, attributes, target, time}) {
 	// FAT16 seems to consider 0x14 as access time, FAT32 seems to override that
 	// for the high bits of the address. I may as well leave this here. Zeroeing
 	// the field in FAT16 seems perfectly reasonable.
-	let locationLow = location & 0xffff
-	let locationHigh = location >> 16
+	let locationLow = cluster & 0xffff
+	let locationHigh = cluster >> 16
 	entry.writeUInt16LE(locationHigh, 0x14)
 	entry.writeUInt16LE(locationLow, 26)
 	entry.writeUInt32LE(size, 28)
 
 	let attr = 0
-	attr |= attributes.ro     && 0x01
-	attr |= attributes.hidden && 0x02
-	attr |= attributes.system && 0x04
-	attr |= attributes.volume && 0x08 // yeah, not likely...
-	attr |= attributes.longfn && 0x0f // the long filename tag. we're not generating these
-	attr |= (attributes.type === 'dir') && 0x10
-	attr |= attributes.archive && 0x20
+	attr |= stat.ro     && 0x01
+	attr |= stat.hidden && 0x02
+	attr |= stat.system && 0x04
+	attr |= stat.volume && 0x08 // yeah, not likely...
+	attr |= stat.longfn && 0x0f // the long filename tag. we're not generating these
+	attr |= (stat.type === 'directory') && 0x10
+	attr |= stat.archive && 0x20
 	entry.writeUInt8(attr, 11)
 
-	let lowercaseAttr = (attributes.lowercase_ext && 16) | (attributes.lowercase_base && 8)
+	let lowercaseAttr = (lowercase_ext && 16) | (lowercase_base && 8)
 	entry.writeUInt8(lowercaseAttr, 12)
 
 	debug('entry %s', name)
@@ -420,19 +408,20 @@ function writeBuffer(buffer, fd, location) {
 	})
 	return promise
 }
-function writeFile(inFD, outFD, location) {
-	// this.outputFD should be set before writeFile is called
+function writeFile(input, outFD, location) {
 	let resolve, reject
 	let promise = new Promise((res,rej)=>{resolve=res; reject=rej})
 
-	if (inFD instanceof Promise) {
-		inFD.then(write).catch(debug)
+	if (input instanceof Buffer) {
+		return writeBuffer(input, outFD, location)
+	} else if (input instanceof Readable) {
+		write()
 	} else {
-		process.nextTick(()=>write(inFD))
+		let buffer = Buffer.from(input)
+		return writeBuffer(input, outFD, location)
 	}
 
-	function write(fd) {
-		let input = fs.createReadStream(null,{fd})
+	function write() {
 		let pos = 0
 		let output = new Writable({
 			write(chunk, encoding, callback) {
