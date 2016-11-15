@@ -1,7 +1,7 @@
 const fs = require('fs')
 const crypto = require('crypto')
 const path = require('path')
-const {Writable, PassThrough} = require('stream')
+const {Writable, PassThrough, Readable} = require('stream')
 const debug = require('debug')('nos-mkfat')
 
 class FAT {
@@ -101,11 +101,25 @@ class FAT {
 	makeDirBuffer(dir) {
 		// files should have sizes and locations before this is called
 		let buffers = []
+		if (dir.stat.name !== '/') {
+			let parentName = path.dirname(dir.stat.name)
+			let self = Object.assign({name: '.'}, dir.stat)
+			let parent
+
+			if (parentName === '/') {
+				parent = {name:'..'}
+			} else {
+				parent = Object.assign({name:'..'}, this.getFile(parentName).stat)
+			}
+
+			buffers.push(dirEntry(self))
+			buffers.push(dirEntry(parent))
+		}
 		this.dirEntries(dir.stat.name).forEach((entry,i)=>{
 			if (lfnCount(entry.stat.name) > 0) {
 				buffers.push(makeLfnEntries(entry.stat.name))
 			}
-			buffers.push(dirEntry(entry))
+			buffers.push(dirEntry(entry.stat))
 		})
 		return Buffer.concat(buffers)
 	}
@@ -296,7 +310,7 @@ function fdSize(fd) {
 	})
 }
 
-function dirEntry({stat}) {
+function dirEntry(stat) {
 	let {name, cluster, size, type, target, mtime:time} = stat
 
 	if (type === 'link') debug('link %s %s %s', name, type, target.stat.type)
@@ -415,13 +429,6 @@ function writeFile(input, outFD, location) {
 	if (input instanceof Buffer) {
 		return writeBuffer(input, outFD, location)
 	} else if (input instanceof Readable) {
-		write()
-	} else {
-		let buffer = Buffer.from(input)
-		return writeBuffer(input, outFD, location)
-	}
-
-	function write() {
 		let pos = 0
 		let output = new Writable({
 			write(chunk, encoding, callback) {
@@ -431,6 +438,9 @@ function writeFile(input, outFD, location) {
 		})
 
 		input.pipe(output).on('finish', resolve).on('error', reject)
+	} else {
+		let buffer = Buffer.from(input)
+		return writeBuffer(input, outFD, location)
 	}
 
 	return promise

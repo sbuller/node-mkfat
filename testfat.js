@@ -27,6 +27,6 @@ fat.entry({name:'xyzzy/BAR.bar', type:'link'}, '/foo/bar')
 fat.entry({name:'xyzzy/a really long file name.test', type:'link'}, '/foo/bar')
 
 fat.entry({name:'boot', type:'directory'})
-fat.entry({name:'syslinux', type:'directory'})
+fat.entry({name:'boot/syslinux', type:'directory'})
 
 fat.makeDisk(out).catch(e=>console.log(e))
