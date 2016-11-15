@@ -3,22 +3,26 @@ let fs = require('fs')
 let c32 = fs.openSync('./ldlinux.c32', 'r')
 let sys = fs.openSync('./ldlinux.sys', 'r')
 let baz = fs.openSync('./README.md', 'r')
-let bss = fs.readFileSync('./ldlinux.bss')
 
 let out = fs.openSync('./test.img', 'w')
 
+let c32stat = fs.statSync(c32)
+let sysstat = fs.statSync(sys)
+let bazstat = fs.statSync(baz)
+
 let fat = new FAT
 
-let root = fat.root()
-let foo = root.dir('foo')
-let xyzzy = root.dir('xyzzy')
-root.file('ldlinux.c32', c32).file('ldlinux.sys', sys).file('baz', baz)
+fat.entry({name:'foo', type:'directory'})
+fat.entry({name:'xyzzy', type:'directory'})
+fat.entry({name:'ldlinux.c32', size:c32stat.size}, )
+fat.entry({name:'ldlinux.sys', size:sysstat.size}, )
+fat.entry({name:'baz', size:bazstat.size}, )
 
-foo.link('bar', '/baz')
-xyzzy.link('BAR.bar', '/foo/bar')
-xyzzy.link('a really long file name.test', '/foo/bar')
+fat.entry({name:'foo/bar', type:'link'}, '/baz')
+fat.entry({name:'xyzzy/BAR.bar', type:'link'}, '/foo/bar')
+fat.entry({name:'xyzzy/a really long file name.test', type:'link'}, '/foo/bar')
 
-root.dir('boot').dir('syslinux')
-
+fat.entry({name:'boot', type:'directory'})
+fat.entry({name:'syslinux', type:'directory'})
 
 fat.makeDisk(out).catch(e=>console.log(e))

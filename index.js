@@ -4,25 +4,6 @@ const path = require('path')
 const {Writable} = require('stream')
 const debug = require('debug')('nos-mkfat')
 
-class Dir {
-	constructor(entry, newEntry) {
-		this._entry = entry
-		this._newEntry = newEntry
-	}
-	dir(name) {
-		let entry = this._newEntry(name, 'dir', this._entry, {entries:[]})
-		return new Dir(entry, this._newEntry)
-	}
-	file(name, fd) {
-		this._newEntry(name, 'file', this._entry, {fd})
-		return this
-	}
-	link(name, target) {
-		this._newEntry(name, 'link', this._entry, {target})
-		return this
-	}
-}
-
 class FAT {
 	constructor(params) {
 		params = params || {}
