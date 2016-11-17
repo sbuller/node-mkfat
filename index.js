@@ -129,8 +129,8 @@ class FAT {
 		let lfnEntryCount = rootEntries.
 			map(sub=>lfnCount(sub.stat.name)).
 			reduce((a,b)=>a+b, 0)
-		rootEntries += lfnEntryCount
-		let rootSectors = Math.ceil(rootEntries.length / 16)
+		let rootEntryCount = rootEntries.length + lfnEntryCount
+		let rootSectors = Math.ceil(rootEntryCount / 16)
 		this.maxRootEntries = 16 * rootSectors
 		return this.makeDirBuffer({stat:{name:'/'}})
 	}
