@@ -115,8 +115,9 @@ class FAT {
 		}
 
 		this.dirEntries(dir.stat.name).forEach((entry,i)=>{
-			if (lfnCount(entry.stat.name) > 0) {
-				buffers.push(makeLfnEntries(entry.stat.name))
+			let basename = path.basename(entry.stat.name)
+			if (lfnCount(basename) > 0) {
+				buffers.push(makeLfnEntries(basename))
 			}
 			buffers.push(dirEntry(entry.stat))
 		})
