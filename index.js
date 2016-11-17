@@ -46,7 +46,7 @@ class FAT {
 			let path = stat.name
 			if (path.slice(0, slicePos) !== dirPath) return false
 
-			let relative = path.slice(slicePos)
+			let relative = path.slice(slicePos + 1)
 			return (relative && relative.indexOf('/') === -1)
 		}
 		return this.entries.filter(matchDir)
@@ -55,14 +55,14 @@ class FAT {
 		return this.entries.filter(({stat:{type}})=>type==='directory')
 	}
 	calcDirSizes() {
-		this.directories().forEach(({stat:dirstat})=>{
+		this.directories().forEach(dir=>{
 			// Yay! O(n²) on this.entries. (Not Yay)
-			let entries = this.dirEntries(dirstat.name)
+			let entries = this.dirEntries(dir.stat.name)
 			let lfnEntryCount = entries.
-				map(sub=>lfnCount(sub.name)).
+				map(sub=>lfnCount(sub.stat.name)).
 				reduce((a,b)=>a+b, 0)
 			debug(lfnEntryCount)
-			dirstat.size =  (entries.length + lfnEntryCount) * 32
+			dir.stat.size =  (entries.length + lfnEntryCount) * 32
 		})
 	}
 	assignClusterSize() {
@@ -75,7 +75,6 @@ class FAT {
 	assignFileLocations() {
 		// files should have sizes before this is called
 		// clusterSize should be assigned
-		let files = this.entries.filter(e=>e.type==='file')
 		let csize = this.clusterSize * 512
 		let cluster = 2
 		this.entries.forEach(entry=>{
@@ -96,25 +95,25 @@ class FAT {
 		this.dataClusters = cluster - 1
 		if (this.dataClusters < 4085)
 			this.extraSpace = Math.max(this.extraSpace, (4085 - this.dataClusters) * csize)
-		return files
 	}
 	makeDirBuffer(dir) {
 		// files should have sizes and locations before this is called
 		let buffers = []
 		if (dir.stat.name !== '/') {
 			let parentName = path.dirname(dir.stat.name)
-			let self = Object.assign({name: '.'}, dir.stat)
+			let self = Object.assign({}, dir.stat, {name:'.'})
 			let parent
 
 			if (parentName === '/') {
-				parent = {name:'..'}
+				parent = {name:'..', cluster: 0, type:'directory'}
 			} else {
-				parent = Object.assign({name:'..'}, this.getFile(parentName).stat)
+				parent = Object.assign({}, this.getFile(parentName).stat, {name:'..'})
 			}
 
 			buffers.push(dirEntry(self))
 			buffers.push(dirEntry(parent))
 		}
+
 		this.dirEntries(dir.stat.name).forEach((entry,i)=>{
 			if (lfnCount(entry.stat.name) > 0) {
 				buffers.push(makeLfnEntries(entry.stat.name))
@@ -313,8 +312,8 @@ function fdSize(fd) {
 function dirEntry(stat) {
 	let {name, cluster, size, type, target, mtime:time} = stat
 
-	if (type === 'link') debug('link %s %s %s', name, type, target.stat.type)
-	if (type === 'link' && target.stat.type === 'directory') type = 'directory'
+	if (type === 'link') debug('link %s %s %s', name, type, target.type)
+	if (type === 'link' && target.type === 'directory') type = 'directory'
 
 	let ext = path.extname(name)
 	let base = path.basename(name, ext)
