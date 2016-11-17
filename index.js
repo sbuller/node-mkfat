@@ -62,7 +62,7 @@ class FAT {
 				map(sub=>lfnCount(sub.stat.name)).
 				reduce((a,b)=>a+b, 0)
 			debug(lfnEntryCount)
-			dir.stat.size =  (entries.length + lfnEntryCount) * 32
+			dir.stat.size =  (entries.length + lfnEntryCount + 2) * 32 // . and ..
 		})
 	}
 	assignClusterSize() {
