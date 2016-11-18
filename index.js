@@ -36,10 +36,10 @@ class FAT {
 		this.entries.push({stat, data})
 		return data
 	}
-	getFile(target) {
+	_getFile(target) {
 		return this.entries.find(({stat:{name}})=>name===target)
 	}
-	dirEntries(dirPath) {
+	_dirEntries(dirPath) {
 		let slicePos = dirPath.length
 
 		function matchDir({stat}) {
@@ -51,13 +51,13 @@ class FAT {
 		}
 		return this.entries.filter(matchDir)
 	}
-	directories() {
+	_directories() {
 		return this.entries.filter(({stat:{type}})=>type==='directory')
 	}
-	calcDirSizes() {
-		this.directories().forEach(dir=>{
+	_calcDirSizes() {
+		this._directories().forEach(dir=>{
 			// Yay! O(n²) on this.entries. (Not Yay)
-			let entries = this.dirEntries(dir.stat.name)
+			let entries = this._dirEntries(dir.stat.name)
 			let lfnEntryCount = entries.
 				map(sub=>lfnCount(sub.stat.name)).
 				reduce((a,b)=>a+b, 0)
@@ -65,14 +65,14 @@ class FAT {
 			dir.stat.size =  (entries.length + lfnEntryCount + 2) * 32 // . and ..
 		})
 	}
-	assignClusterSize() {
+	_assignClusterSize() {
 		// files should have sizes before this is called
 		this.dataSectors = sectorsNeeded(this.entries)
 		let minimumClusters = this.entries.filter(e=>e.stat.type!=='link').length
 		this.clusterSize = calcClusterSize(this.dataSectors + Math.ceil(this.extraSpace/512), minimumClusters)
 		debug('Calculated a clusterSize of %s', this.clusterSize)
 	}
-	assignFileLocations() {
+	_assignFileLocations() {
 		// files should have sizes before this is called
 		// clusterSize should be assigned
 		let csize = this.clusterSize * 512
@@ -84,7 +84,7 @@ class FAT {
 				cluster += Math.ceil(stat.size/csize)
 			} else {
 				// The linked file must be declared before the link, or this will fail
-				let file = this.getFile(entry.data)
+				let file = this._getFile(entry.data)
 				stat.target = file.stat
 				stat.cluster = file.stat.cluster
 				// I'm assuming that by now nothing is going to be messeg up by a
@@ -96,7 +96,7 @@ class FAT {
 		if (this.dataClusters < 4085)
 			this.extraSpace = Math.max(this.extraSpace, (4085 - this.dataClusters) * csize)
 	}
-	makeDirBuffer(dir) {
+	_makeDirBuffer(dir) {
 		// files should have sizes and locations before this is called
 		let buffers = []
 		if (dir.stat.name !== '/') {
@@ -107,14 +107,14 @@ class FAT {
 			if (parentName === '/') {
 				parent = {name:'..', cluster: 0, type:'directory'}
 			} else {
-				parent = Object.assign({}, this.getFile(parentName).stat, {name:'..'})
+				parent = Object.assign({}, this._getFile(parentName).stat, {name:'..'})
 			}
 
 			buffers.push(dirEntry(self))
 			buffers.push(dirEntry(parent))
 		}
 
-		this.dirEntries(dir.stat.name).forEach((entry,i)=>{
+		this._dirEntries(dir.stat.name).forEach((entry,i)=>{
 			let basename = path.basename(entry.stat.name)
 			if (lfnCount(basename) > 0) {
 				buffers.push(makeLfnEntries(basename))
@@ -123,18 +123,18 @@ class FAT {
 		})
 		return Buffer.concat(buffers)
 	}
-	makeRootDir() {
+	_makeRootDir() {
 		// files should have sizes and locations before this is called
-		let rootEntries = this.dirEntries('/')
+		let rootEntries = this._dirEntries('/')
 		let lfnEntryCount = rootEntries.
 			map(sub=>lfnCount(sub.stat.name)).
 			reduce((a,b)=>a+b, 0)
 		let rootEntryCount = rootEntries.length + lfnEntryCount
 		let rootSectors = Math.ceil(rootEntryCount / 16)
 		this.maxRootEntries = 16 * rootSectors
-		return this.makeDirBuffer({stat:{name:'/'}})
+		return this._makeDirBuffer({stat:{name:'/'}})
 	}
-	makeFAT() {
+	_makeFAT() {
 		let buffer = Buffer.alloc(this.dataClusters * 16)
 		buffer.writeUInt8(this.mediaDescriptor, 0)
 		buffer.writeUInt8(0xFF, 1)
@@ -160,36 +160,33 @@ class FAT {
 
 		return buffer
 	}
-	emptyClusters() {
+	_emptyClusters() {
 		return Math.ceil(this.extraSpace / 512 / this.clusterSize)
 	}
-	fatSectors() {
-		return Math.ceil((this.dataClusters + this.emptyClusters())* 16 / 512)
+	_fatSectors() {
+		return Math.ceil((this.dataClusters + this._emptyClusters())* 16 / 512)
 	}
-	rootDirSectors() {
+	_rootDirSectors() {
 		return Math.ceil(this.maxRootEntries * 32 / 512)
 	}
-	dataAreaSectors() {
-		return this.dataClusters * this.clusterSize
-	}
-	countAllSectors() {
-		let fatsectors = this.fatSectors()
-		let rootdirsectors = this.rootDirSectors()
+	_countAllSectors() {
+		let fatsectors = this._fatSectors()
+		let rootdirsectors = this._rootDirSectors()
 		// Not suitable as there are cases where trailing zeros are necessary
 		// let datasectors = this.dataSectors()
 		let dataareasectors = this.dataClusters * this.clusterSize
-		let emptysectors = this.emptyClusters() * this.clusterSize
+		let emptysectors = this._emptyClusters() * this.clusterSize
 		debug(`Counting all Sectors. ${fatsectors}, ${rootdirsectors}, ${dataareasectors}, ${emptysectors}`)
 
 		return this.reservedSectors + (fatsectors * this.fatCount) + rootdirsectors + dataareasectors + emptysectors
 	}
-	rootDirLocation() {
-		return 512 * (this.reservedSectors + this.fatCount * this.fatSectors())
+	_rootDirLocation() {
+		return 512 * (this.reservedSectors + this.fatCount * this._fatSectors())
 	}
-	makeBootSector() {
+	_makeBootSector() {
 		let buffer = Buffer.alloc(512, 0)
 
-		let sectorCount = this.countAllSectors()
+		let sectorCount = this._countAllSectors()
 		let smallSectorCount = 0
 		let largeSectorCount = 0
 		if (sectorCount <= 0xFFFF) {
@@ -211,7 +208,7 @@ class FAT {
 		buffer.writeUInt16LE(this.maxRootEntries,  0x11)
 		buffer.writeUInt16LE(smallSectorCount,     0x13)
 		buffer.writeUInt8   (this.mediaDescriptor, 0x15)
-		buffer.writeUInt16LE(this.fatSectors(),    0x16)
+		buffer.writeUInt16LE(this._fatSectors(),    0x16)
 		buffer.writeUInt16LE(0x20,                 0x18) // CHS - sectors
 		buffer.writeUInt16LE(0x40,                 0x1A) // CHS - heads
 		buffer.writeUInt32LE(0x00,                 0x1C) // hidden sectors
@@ -230,15 +227,15 @@ class FAT {
 	makeDisk(outputFD) {
 		this.outputFD = outputFD
 
-		this.calcDirSizes()
-		this.assignClusterSize()
-		this.assignFileLocations()
+		this._calcDirSizes()
+		this._assignClusterSize()
+		this._assignFileLocations()
 		debug('File locations assigned')
 
-		let rootDir = this.makeRootDir()
-		let bss = this.makeBootSector()
-		let fat = this.makeFAT()
-		let lastByte = this.countAllSectors() * 512 - 1
+		let rootDir = this._makeRootDir()
+		let bss = this._makeBootSector()
+		let fat = this._makeFAT()
+		let lastByte = this._countAllSectors() * 512 - 1
 
 		debug('root directory')
 		debug(rootDir.toString('hex'))
@@ -248,9 +245,9 @@ class FAT {
 
 		let datawritten = writeBuffer(Buffer.alloc(1), outputFD, lastByte).then(()=>{ // pre-allocate space, including final padding
 			debug(`Pre allocated space by writing a 0 at ${lastByte}`)
-			let dataAreaStart = this.rootDirLocation() + this.rootDirSectors() * 512
+			let dataAreaStart = this._rootDirLocation() + this._rootDirSectors() * 512
 
-			debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this.rootDirLocation()}, and has ${this.rootDirSectors()} sectors`)
+			debug(`Data Area starts at ${dataAreaStart} because rootDir starts at ${this._rootDirLocation()}, and has ${this._rootDirSectors()} sectors`)
 
 			let filesWriteActions = this.entries.map(entry=>{
 				if (entry.stat.type === 'link') return ()=>Promise.resolve()
@@ -259,12 +256,12 @@ class FAT {
 				if (entry.stat.type === 'file')
 					return ()=>writeFile(entry.data, outputFD, entryStart)
 				if (entry.stat.type === 'directory')
-					return ()=>writeBuffer(this.makeDirBuffer(entry), outputFD, entryStart)
+					return ()=>writeBuffer(this._makeDirBuffer(entry), outputFD, entryStart)
 			})
-			debug(`Writing root directory at ${this.rootDirLocation()}`)
-			let rootWriteAction = ()=>writeBuffer(rootDir, outputFD, this.rootDirLocation())
+			debug(`Writing root directory at ${this._rootDirLocation()}`)
+			let rootWriteAction = ()=>writeBuffer(rootDir, outputFD, this._rootDirLocation())
 			let bssWriteAction = ()=>writeBuffer(bss, outputFD, 0)
-			let fatSize = this.fatSectors()
+			let fatSize = this._fatSectors()
 			let fatWriteActions = []
 			for (let i=0; i<this.fatCount; i++) {
 				let p = ()=>writeBuffer(fat, outputFD, this.reservedSectors * 512 + i*fatSize)
